@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bedrock Descent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hud">
+        <h1>Bedrock Descent</h1>
+        <p id="depth-readout">Depth: 0m</p>
+      </header>
+
+      <section class="stage-wrap">
+        <canvas id="game-canvas" width="960" height="540" aria-label="Bedrock game canvas"></canvas>
+        <div class="controls-panel">
+          <button id="start-btn" type="button">Start Descent</button>
+          <p id="mode-readout">Mode: title</p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/game.js"></script>
+  </body>
+</html>
