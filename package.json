@@ -6,5 +6,9 @@
   "scripts": {
     "serve": "npx serve . -l 4173",
     "test:playwright": "node /Users/davidmiller/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2",
+    "serve": "^14.2.5"
   }
 }
