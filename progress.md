@@ -18,3 +18,10 @@ and push up like 8 separate PRs to make a minecraft themed game around reaching 
 - Added biome readout, depth markers, milestone popups, and depth-based atmosphere shading.
 - Added `scripts/actions/pr2-smoke.json` for deeper movement/fall smoke testing.
 - Playwright smoke run completed for PR2 (`output/web-game/pr2`), showing descent progression to 72m with no console errors.
+
+## PR3 - Mining and inventory
+- Added mouse-targeted mining with distance checks, block hardness, and progress bars.
+- Added inventory collection for dirt/stone/coal/iron from mined blocks.
+- Added HUD inventory readout and mining state in `render_game_to_text`.
+- Added `scripts/actions/pr3-smoke.json` with mouse mining input for automated checks.
+- Playwright smoke run completed for PR3 (`output/web-game/pr3`), confirming mined block drops recorded in inventory with no console errors.

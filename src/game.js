@@ -7,6 +7,7 @@ const VIEW_H = 540;
 const GRAVITY = 1700;
 const MOVE_SPEED = 240;
 const JUMP_SPEED = 660;
+const MINE_REACH = TILE * 8;
 
 const TILE_TYPES = {
   air: 0,
@@ -28,6 +29,22 @@ const tileNames = {
   6: "iron_ore",
 };
 
+const hardnessByTile = {
+  [TILE_TYPES.dirt]: 0.42,
+  [TILE_TYPES.grass]: 0.45,
+  [TILE_TYPES.stone]: 1.2,
+  [TILE_TYPES.coal]: 1.35,
+  [TILE_TYPES.iron]: 1.7,
+};
+
+const resourceByTile = {
+  [TILE_TYPES.dirt]: "dirt",
+  [TILE_TYPES.grass]: "dirt",
+  [TILE_TYPES.stone]: "stone",
+  [TILE_TYPES.coal]: "coal",
+  [TILE_TYPES.iron]: "iron",
+};
+
 const colors = {
   skyTop: "#92d6ff",
   skyBottom: "#3a89c8",
@@ -39,6 +56,7 @@ const colors = {
   iron: "#d1a67f",
   player: "#fbbf24",
   accent: "#1f2937",
+  mining: "#fef3c7",
 };
 
 const canvas = document.getElementById("game-canvas");
@@ -47,6 +65,7 @@ const startBtn = document.getElementById("start-btn");
 const depthReadout = document.getElementById("depth-readout");
 const biomeReadout = document.getElementById("biome-readout");
 const modeReadout = document.getElementById("mode-readout");
+const inventoryReadout = document.getElementById("inventory-readout");
 
 const state = {
   mode: "title",
@@ -54,10 +73,27 @@ const state = {
   world: [],
   cameraY: 0,
   time: 0,
+  mouse: {
+    x: VIEW_W * 0.5,
+    y: VIEW_H * 0.5,
+    down: false,
+  },
   milestone: {
     depth: 0,
     text: "",
     timer: 0,
+  },
+  mine: {
+    tx: null,
+    ty: null,
+    progress: 0,
+    required: 0,
+  },
+  inventory: {
+    dirt: 0,
+    stone: 0,
+    coal: 0,
+    iron: 0,
   },
   player: {
     x: TILE * 6,
@@ -176,12 +212,100 @@ function tileAt(tx, ty) {
   return state.world[ty][tx];
 }
 
+function setTile(tx, ty, value) {
+  if (tx < 0 || tx >= WORLD_W) return;
+  if (ty < 0 || ty >= WORLD_H) return;
+  if (ty >= BEDROCK_START) return;
+  state.world[ty][tx] = value;
+}
+
 function isSolidTile(value) {
   return value !== TILE_TYPES.air;
 }
 
+function isBreakable(value) {
+  return value !== TILE_TYPES.air && value !== TILE_TYPES.bedrock;
+}
+
 function getDepthMeters() {
   return Math.max(0, Math.floor((state.player.y - TILE * 2) / TILE));
+}
+
+function getPlayerCenter() {
+  return {
+    x: state.player.x + state.player.w * 0.5,
+    y: state.player.y + state.player.h * 0.5,
+  };
+}
+
+function getCanvasPoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const rawX = (event.clientX - rect.left) * scaleX;
+  const rawY = (event.clientY - rect.top) * scaleY;
+  return {
+    x: Math.max(0, Math.min(canvas.width, rawX)),
+    y: Math.max(0, Math.min(canvas.height, rawY)),
+  };
+}
+
+function getTargetedTile() {
+  const worldX = state.mouse.x;
+  const worldY = state.mouse.y + state.cameraY;
+  const playerCenter = getPlayerCenter();
+  const tx = Math.floor(worldX / TILE);
+  const ty = Math.floor(worldY / TILE);
+  const candidates = [];
+
+  for (let oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      const candidateX = tx + ox;
+      const candidateY = ty + oy;
+      const tile = tileAt(candidateX, candidateY);
+      if (!isBreakable(tile)) continue;
+
+      const blockCenterX = candidateX * TILE + TILE * 0.5;
+      const blockCenterY = candidateY * TILE + TILE * 0.5;
+      const playerDist = Math.hypot(blockCenterX - playerCenter.x, blockCenterY - playerCenter.y);
+      if (playerDist > MINE_REACH) continue;
+
+      const cursorDist = Math.hypot(blockCenterX - worldX, blockCenterY - worldY);
+      candidates.push({
+        tx: candidateX,
+        ty: candidateY,
+        tile,
+        required: hardnessByTile[tile] || 1,
+        cursorDist,
+      });
+    }
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.cursorDist - b.cursorDist);
+  return candidates[0];
+}
+
+function resetMiningState() {
+  state.mine.tx = null;
+  state.mine.ty = null;
+  state.mine.progress = 0;
+  state.mine.required = 0;
+}
+
+function inventorySummary() {
+  const parts = [];
+  if (state.inventory.dirt) parts.push(`dirt ${state.inventory.dirt}`);
+  if (state.inventory.stone) parts.push(`stone ${state.inventory.stone}`);
+  if (state.inventory.coal) parts.push(`coal ${state.inventory.coal}`);
+  if (state.inventory.iron) parts.push(`iron ${state.inventory.iron}`);
+  return parts.length ? parts.join(" | ") : "empty";
+}
+
+function grantDrop(tile) {
+  const key = resourceByTile[tile];
+  if (!key) return;
+  state.inventory[key] += 1;
 }
 
 function resetPlayer() {
@@ -194,6 +318,11 @@ function resetPlayer() {
   state.milestone.depth = 0;
   state.milestone.text = "";
   state.milestone.timer = 0;
+  state.inventory.dirt = 0;
+  state.inventory.stone = 0;
+  state.inventory.coal = 0;
+  state.inventory.iron = 0;
+  resetMiningState();
 }
 
 function startRound() {
@@ -258,6 +387,38 @@ function integratePhysics(dt) {
   }
 }
 
+function updateMining(dt) {
+  if (state.mode !== "playing") {
+    resetMiningState();
+    return;
+  }
+
+  if (!state.mouse.down) {
+    resetMiningState();
+    return;
+  }
+
+  const target = getTargetedTile();
+  if (!target) {
+    resetMiningState();
+    return;
+  }
+
+  if (state.mine.tx !== target.tx || state.mine.ty !== target.ty) {
+    state.mine.tx = target.tx;
+    state.mine.ty = target.ty;
+    state.mine.progress = 0;
+    state.mine.required = target.required;
+  }
+
+  state.mine.progress += dt;
+  if (state.mine.progress >= state.mine.required) {
+    setTile(target.tx, target.ty, TILE_TYPES.air);
+    grantDrop(target.tile);
+    resetMiningState();
+  }
+}
+
 function checkGoal() {
   const footY = state.player.y + state.player.h + 1;
   const tx = Math.floor((state.player.x + state.player.w / 2) / TILE);
@@ -291,6 +452,7 @@ function update(dt) {
   }
 
   applyInput();
+  updateMining(dt);
   integratePhysics(dt);
   checkGoal();
   updateMilestones(dt);
@@ -416,6 +578,28 @@ function drawPlayer() {
   ctx.fillRect(px + state.player.w - 9, py + 8, 5, 5);
 }
 
+function drawMiningCursor() {
+  if (state.mode !== "playing") return;
+
+  const target = getTargetedTile();
+  if (!target) return;
+
+  const px = target.tx * TILE;
+  const py = target.ty * TILE - state.cameraY;
+
+  ctx.strokeStyle = colors.mining;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
+
+  if (state.mine.tx === target.tx && state.mine.ty === target.ty && state.mine.required > 0) {
+    const ratio = Math.min(1, state.mine.progress / state.mine.required);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(px + 3, py - 10, TILE - 6, 6);
+    ctx.fillStyle = "#f59e0b";
+    ctx.fillRect(px + 3, py - 10, (TILE - 6) * ratio, 6);
+  }
+}
+
 function drawMilestone() {
   if (state.milestone.timer <= 0) return;
 
@@ -447,9 +631,10 @@ function drawModeMessage() {
 
   ctx.font = "12px 'Press Start 2P'";
   if (state.mode === "title") {
-    ctx.fillText("WASD/ARROWS TO MOVE", 206, 230);
-    ctx.fillText("SPACE OR W TO JUMP", 220, 260);
-    ctx.fillText("FOLLOW THE SHAFT TO BEDROCK", 156, 300);
+    ctx.fillText("WASD/ARROWS TO MOVE", 206, 220);
+    ctx.fillText("SPACE OR W TO JUMP", 220, 252);
+    ctx.fillText("HOLD MOUSE TO MINE", 222, 284);
+    ctx.fillText("REACH BEDROCK TO WIN", 190, 316);
   } else {
     ctx.fillText("YOU REACHED BEDROCK", 210, 246);
     ctx.fillText("PRESS RESTART FOR A NEW RUN", 148, 290);
@@ -461,11 +646,13 @@ function refreshDomHud() {
   depthReadout.textContent = `Depth: ${depth}m`;
   biomeReadout.textContent = `Biome: ${getBiomeLabel(depth)}`;
   modeReadout.textContent = `Mode: ${state.mode}`;
+  inventoryReadout.textContent = `Bag: ${inventorySummary()}`;
 }
 
 function render() {
   drawWorld();
   drawPlayer();
+  drawMiningCursor();
   drawMilestone();
   drawModeMessage();
   refreshDomHud();
@@ -496,6 +683,29 @@ startBtn.addEventListener("click", () => {
   startRound();
 });
 
+window.addEventListener("mousemove", (event) => {
+  const point = getCanvasPoint(event);
+  state.mouse.x = point.x;
+  state.mouse.y = point.y;
+});
+
+window.addEventListener("mousedown", (event) => {
+  if (event.button === 0) {
+    const point = getCanvasPoint(event);
+    state.mouse.x = point.x;
+    state.mouse.y = point.y;
+    state.mouse.down = true;
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  state.mouse.down = false;
+});
+
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
 window.addEventListener("keydown", (event) => handleKeyChange(event, true));
 window.addEventListener("keyup", (event) => handleKeyChange(event, false));
 
@@ -519,6 +729,17 @@ window.render_game_to_text = () => {
     },
     camera: { y: Math.round(state.cameraY) },
     goal: { bedrockStartsAtTileY: BEDROCK_START },
+    inventory: { ...state.inventory },
+    mouse: {
+      x: Math.round(state.mouse.x),
+      y: Math.round(state.mouse.y),
+      down: state.mouse.down,
+    },
+    mining: {
+      target: state.mine.tx === null ? null : { x: state.mine.tx, y: state.mine.ty },
+      progress: Number(state.mine.progress.toFixed(3)),
+      required: Number(state.mine.required.toFixed(3)),
+    },
     latestMilestone: state.milestone.text || null,
     belowPlayerTile: {
       x: sampleTx,
