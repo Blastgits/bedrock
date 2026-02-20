@@ -91,6 +91,7 @@ const colors = {
   iron: "#d1a67f",
   lavaBright: "#fb923c",
   lavaDark: "#dc2626",
+  torch: "#fde68a",
   player: "#fbbf24",
   accent: "#1f2937",
   mining: "#fef3c7",
@@ -127,7 +128,9 @@ const state = {
     timer: 0,
   },
   showCraftPanel: false,
+  isFullscreen: false,
   tool: "hand",
+  torches: [],
   mine: {
     tx: null,
     ty: null,
@@ -359,6 +362,72 @@ function getTargetedTile() {
   return candidates[0];
 }
 
+function withinReachOfPlayer(tx, ty) {
+  const playerCenter = getPlayerCenter();
+  const tileCenterX = tx * TILE + TILE * 0.5;
+  const tileCenterY = ty * TILE + TILE * 0.5;
+  return Math.hypot(tileCenterX - playerCenter.x, tileCenterY - playerCenter.y) <= MINE_REACH;
+}
+
+function hasTorchAt(tx, ty) {
+  return state.torches.some((torch) => torch.tx === tx && torch.ty === ty);
+}
+
+function canPlaceTorchAt(tx, ty) {
+  if (tx < 0 || tx >= WORLD_W || ty < 0 || ty >= WORLD_H) return false;
+  if (tileAt(tx, ty) !== TILE_TYPES.air) return false;
+  const below = tileAt(tx, ty + 1);
+  if (!isSolidTile(below)) return false;
+  if (below === TILE_TYPES.lava) return false;
+  if (hasTorchAt(tx, ty)) return false;
+  return true;
+}
+
+function findTorchPlacement() {
+  const worldX = state.mouse.x;
+  const worldY = state.mouse.y + state.cameraY;
+  const tx = Math.floor(worldX / TILE);
+  const ty = Math.floor(worldY / TILE);
+
+  const candidates = [
+    [tx, ty],
+    [tx, ty - 1],
+    [tx + 1, ty],
+    [tx - 1, ty],
+  ];
+
+  const minedTarget = getTargetedTile();
+  if (minedTarget) {
+    candidates.unshift([minedTarget.tx, minedTarget.ty - 1]);
+  }
+
+  for (const [candidateX, candidateY] of candidates) {
+    if (!withinReachOfPlayer(candidateX, candidateY)) continue;
+    if (!canPlaceTorchAt(candidateX, candidateY)) continue;
+    return { tx: candidateX, ty: candidateY };
+  }
+
+  return null;
+}
+
+function placeTorchAtCursor() {
+  if (state.mode !== "playing") return;
+  if (state.inventory.coal <= 0) {
+    addToast("Need coal to place torch");
+    return;
+  }
+
+  const placement = findTorchPlacement();
+  if (!placement) {
+    addToast("No valid torch placement");
+    return;
+  }
+
+  state.torches.push(placement);
+  state.inventory.coal -= 1;
+  addToast("Torch placed");
+}
+
 function resetMiningState() {
   state.mine.tx = null;
   state.mine.ty = null;
@@ -404,9 +473,10 @@ function resetPlayer() {
   state.toast.timer = 0;
   state.inventory.dirt = 0;
   state.inventory.stone = 0;
-  state.inventory.coal = 0;
+  state.inventory.coal = 1;
   state.inventory.iron = 0;
   state.tool = "hand";
+  state.torches = [];
   state.showCraftPanel = false;
   resetMiningState();
 }
@@ -416,6 +486,30 @@ function startRound() {
   resetPlayer();
   state.mode = "playing";
   startBtn.textContent = "Restart";
+}
+
+function syncFullscreenState() {
+  state.isFullscreen = document.fullscreenElement === canvas;
+  if (state.isFullscreen) {
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+  } else {
+    canvas.style.width = "100%";
+    canvas.style.height = "auto";
+  }
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement === canvas) {
+      await document.exitFullscreen();
+    } else {
+      await canvas.requestFullscreen();
+    }
+  } catch {
+    addToast("Fullscreen unavailable");
+  }
+  syncFullscreenState();
 }
 
 function overlapSolidRect(x, y, w, h) {
@@ -802,6 +896,56 @@ function drawWorld() {
   }
 }
 
+function drawTorches() {
+  for (const torch of state.torches) {
+    const px = torch.tx * TILE + TILE * 0.5;
+    const py = torch.ty * TILE - state.cameraY + TILE;
+    if (py < -12 || py > VIEW_H + 12) continue;
+
+    ctx.fillStyle = "#6b4f2b";
+    ctx.fillRect(px - 1, py - 10, 2, 10);
+    ctx.fillStyle = colors.torch;
+    ctx.fillRect(px - 3, py - 14, 6, 5);
+    ctx.fillStyle = `rgba(251, 146, 60, ${(0.52 + Math.sin(state.time * 9 + px * 0.02) * 0.18).toFixed(3)})`;
+    ctx.fillRect(px - 4, py - 16, 8, 4);
+  }
+}
+
+function drawLighting() {
+  const depth = getDepthMeters();
+  const darkness = state.mode === "title" ? 0.24 : Math.min(0.74, 0.1 + depth / 160);
+
+  ctx.save();
+  ctx.fillStyle = `rgba(0, 0, 0, ${darkness.toFixed(3)})`;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.globalCompositeOperation = "destination-out";
+
+  const cutLight = (x, y, radius, alpha) => {
+    const grad = ctx.createRadialGradient(x, y, radius * 0.14, x, y, radius);
+    grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  cutLight(
+    state.player.x + state.player.w * 0.5,
+    state.player.y - state.cameraY + state.player.h * 0.35,
+    150,
+    0.94,
+  );
+
+  for (const torch of state.torches) {
+    const tx = torch.tx * TILE + TILE * 0.5;
+    const ty = torch.ty * TILE - state.cameraY + TILE - 12;
+    cutLight(tx, ty, 120, 0.85);
+  }
+
+  ctx.restore();
+}
+
 function drawHealthBar() {
   const x = 20;
   const y = 18;
@@ -936,8 +1080,9 @@ function drawModeMessage() {
     ctx.fillText("WASD/ARROWS TO MOVE", 206, 212);
     ctx.fillText("SPACE OR W TO JUMP", 220, 238);
     ctx.fillText("HOLD MOUSE TO MINE", 222, 264);
-    ctx.fillText("B / ENTER TO CRAFT TOOLS", 170, 290);
-    ctx.fillText("AVOID LAVA, REACH BEDROCK", 175, 322);
+    ctx.fillText("RIGHT CLICK TO PLACE TORCH", 158, 290);
+    ctx.fillText("B / ENTER CRAFT  |  F FULLSCREEN", 136, 316);
+    ctx.fillText("AVOID LAVA, REACH BEDROCK", 175, 342);
   } else if (state.mode === "won") {
     ctx.fillText("YOU REACHED BEDROCK", 210, 246);
     ctx.fillText("PRESS RESTART FOR A NEW RUN", 148, 290);
@@ -959,8 +1104,10 @@ function refreshDomHud() {
 
 function render() {
   drawWorld();
-  drawHealthBar();
+  drawTorches();
   drawPlayer();
+  drawLighting();
+  drawHealthBar();
   drawMiningCursor();
   drawMilestone();
   drawCraftPanel();
@@ -986,6 +1133,11 @@ function handleKeyChange(event, isDown) {
   const key = event.key.toLowerCase();
   state.keys[isDown ? "add" : "delete"](key);
 
+  if (isDown && key === "f") {
+    toggleFullscreen();
+    event.preventDefault();
+  }
+
   if (isDown && state.mode === "playing") {
     if (key === "b") {
       tryCraft("stone");
@@ -996,6 +1148,10 @@ function handleKeyChange(event, isDown) {
     }
     if (key === "c") {
       state.showCraftPanel = !state.showCraftPanel;
+      event.preventDefault();
+    }
+    if (key === "t") {
+      placeTorchAtCursor();
       event.preventDefault();
     }
   }
@@ -1016,11 +1172,15 @@ window.addEventListener("mousemove", (event) => {
 });
 
 window.addEventListener("mousedown", (event) => {
+  const point = getCanvasPoint(event);
+  state.mouse.x = point.x;
+  state.mouse.y = point.y;
+
   if (event.button === 0) {
-    const point = getCanvasPoint(event);
-    state.mouse.x = point.x;
-    state.mouse.y = point.y;
     state.mouse.down = true;
+  }
+  if (event.button === 2) {
+    placeTorchAtCursor();
   }
 });
 
@@ -1034,6 +1194,8 @@ canvas.addEventListener("contextmenu", (event) => {
 
 window.addEventListener("keydown", (event) => handleKeyChange(event, true));
 window.addEventListener("keyup", (event) => handleKeyChange(event, false));
+window.addEventListener("fullscreenchange", syncFullscreenState);
+window.addEventListener("resize", syncFullscreenState);
 
 window.render_game_to_text = () => {
   const footY = state.player.y + state.player.h;
@@ -1058,6 +1220,9 @@ window.render_game_to_text = () => {
     goal: { bedrockStartsAtTileY: BEDROCK_START },
     tool: getToolMeta().label,
     inventory: { ...state.inventory },
+    torches: state.torches.slice(0, 8).map((torch) => ({ x: torch.tx, y: torch.ty })),
+    torchCount: state.torches.length,
+    fullscreen: state.isFullscreen,
     touchingLava: overlapTileType(state.player.x, state.player.y, state.player.w, state.player.h, TILE_TYPES.lava),
     mouse: {
       x: Math.round(state.mouse.x),
@@ -1090,5 +1255,6 @@ window.advanceTime = (ms) => {
 };
 
 buildWorld();
+syncFullscreenState();
 render();
 requestAnimationFrame(frame);
