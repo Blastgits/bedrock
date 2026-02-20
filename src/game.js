@@ -8,12 +8,35 @@ const GRAVITY = 1700;
 const MOVE_SPEED = 240;
 const JUMP_SPEED = 660;
 
+const TILE_TYPES = {
+  air: 0,
+  dirt: 1,
+  stone: 2,
+  bedrock: 3,
+  grass: 4,
+  coal: 5,
+  iron: 6,
+};
+
+const tileNames = {
+  0: "air",
+  1: "dirt",
+  2: "stone",
+  3: "bedrock",
+  4: "grass",
+  5: "coal_ore",
+  6: "iron_ore",
+};
+
 const colors = {
-  skyTop: "#78c7ff",
-  skyBottom: "#2d8cd6",
+  skyTop: "#92d6ff",
+  skyBottom: "#3a89c8",
   dirt: "#8b5a2b",
   stone: "#7f8c8d",
   bedrock: "#2f3136",
+  grass: "#4ade80",
+  coal: "#525b61",
+  iron: "#d1a67f",
   player: "#fbbf24",
   accent: "#1f2937",
 };
@@ -22,6 +45,7 @@ const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("start-btn");
 const depthReadout = document.getElementById("depth-readout");
+const biomeReadout = document.getElementById("biome-readout");
 const modeReadout = document.getElementById("mode-readout");
 
 const state = {
@@ -30,6 +54,11 @@ const state = {
   world: [],
   cameraY: 0,
   time: 0,
+  milestone: {
+    depth: 0,
+    text: "",
+    timer: 0,
+  },
   player: {
     x: TILE * 6,
     y: TILE * 2,
@@ -46,50 +75,125 @@ function randSeeded(x, y) {
   return n - Math.floor(n);
 }
 
-function buildWorld() {
-  const world = new Array(WORLD_H);
+function getBiomeLabel(depth) {
+  if (depth < 16) return "surface";
+  if (depth < 46) return "dirtline";
+  if (depth < 88) return "stone caves";
+  if (depth < 122) return "deep slate";
+  return "bedrock frontier";
+}
+
+function buildBaseWorld(world) {
   for (let y = 0; y < WORLD_H; y++) {
-    world[y] = new Array(WORLD_W).fill(0);
+    world[y] = new Array(WORLD_W).fill(TILE_TYPES.air);
     for (let x = 0; x < WORLD_W; x++) {
-      if (y < 4) {
-        world[y][x] = 0;
-      } else if (y >= BEDROCK_START) {
-        world[y][x] = 3;
-      } else if (y > 88) {
-        world[y][x] = randSeeded(x, y) > 0.24 ? 2 : 1;
+      if (y < 3) {
+        world[y][x] = TILE_TYPES.air;
+        continue;
+      }
+
+      if (y === 3) {
+        world[y][x] = TILE_TYPES.grass;
+        continue;
+      }
+
+      if (y >= BEDROCK_START) {
+        world[y][x] = TILE_TYPES.bedrock;
+        continue;
+      }
+
+      const r = randSeeded(x, y);
+      if (y < 42) {
+        world[y][x] = r > 0.78 ? TILE_TYPES.stone : TILE_TYPES.dirt;
+      } else if (y < 86) {
+        if (r > 0.94) world[y][x] = TILE_TYPES.coal;
+        else world[y][x] = r > 0.34 ? TILE_TYPES.stone : TILE_TYPES.dirt;
       } else {
-        world[y][x] = randSeeded(x, y) > 0.72 ? 2 : 1;
+        if (r > 0.95) world[y][x] = TILE_TYPES.iron;
+        else if (r > 0.88) world[y][x] = TILE_TYPES.coal;
+        else world[y][x] = TILE_TYPES.stone;
+      }
+    }
+  }
+}
+
+function carveDescentShaft(world) {
+  let center = 6;
+  for (let y = 2; y < BEDROCK_START; y++) {
+    const driftRoll = randSeeded(center + y, y);
+    if (y % 6 === 0) {
+      if (driftRoll > 0.62) center += 1;
+      if (driftRoll < 0.36) center -= 1;
+      center = Math.max(4, Math.min(WORLD_W - 5, center));
+    }
+
+    const shaftWidth = y < 44 ? 3 : 2;
+    for (let x = center - shaftWidth; x <= center + shaftWidth; x++) {
+      world[y][x] = TILE_TYPES.air;
+      if (y + 1 < BEDROCK_START && randSeeded(x, y + 1) > 0.72) {
+        world[y + 1][x] = TILE_TYPES.air;
+      }
+    }
+
+    if (y % 24 === 0) {
+      for (let cy = y; cy < y + 3; cy++) {
+        for (let cx = center - 7; cx <= center + 7; cx++) {
+          if (cx < 2 || cx > WORLD_W - 3 || cy >= BEDROCK_START) continue;
+          world[cy][cx] = TILE_TYPES.air;
+        }
+      }
+    }
+
+    if (y % 12 === 0) {
+      const ledgeDir = randSeeded(y, center) > 0.5 ? 1 : -1;
+      const ledgeY = Math.min(BEDROCK_START - 1, y + 1);
+      const ledgeX = center + ledgeDir * (shaftWidth + 1);
+      if (ledgeX > 1 && ledgeX < WORLD_W - 2) {
+        world[ledgeY][ledgeX] = y > 70 ? TILE_TYPES.stone : TILE_TYPES.dirt;
       }
     }
   }
 
-  for (let y = 0; y < 11; y++) {
-    world[y][5] = 0;
-    world[y][6] = 0;
-    world[y][7] = 0;
+  for (let y = 0; y <= 8; y++) {
+    world[y][4] = TILE_TYPES.air;
+    world[y][5] = TILE_TYPES.air;
+    world[y][6] = TILE_TYPES.air;
+    world[y][7] = TILE_TYPES.air;
   }
+}
 
+function buildWorld() {
+  const world = new Array(WORLD_H);
+  buildBaseWorld(world);
+  carveDescentShaft(world);
   state.world = world;
 }
 
 function tileAt(tx, ty) {
-  if (tx < 0 || tx >= WORLD_W) return 3;
-  if (ty < 0) return 0;
-  if (ty >= WORLD_H) return 3;
+  if (tx < 0 || tx >= WORLD_W) return TILE_TYPES.bedrock;
+  if (ty < 0) return TILE_TYPES.air;
+  if (ty >= WORLD_H) return TILE_TYPES.bedrock;
   return state.world[ty][tx];
 }
 
 function isSolidTile(value) {
-  return value !== 0;
+  return value !== TILE_TYPES.air;
+}
+
+function getDepthMeters() {
+  return Math.max(0, Math.floor((state.player.y - TILE * 2) / TILE));
 }
 
 function resetPlayer() {
-  state.player.x = TILE * 6;
-  state.player.y = TILE * 2;
+  state.player.x = TILE * 5.5;
+  state.player.y = TILE * 1.5;
   state.player.vx = 0;
   state.player.vy = 0;
   state.player.onGround = false;
   state.cameraY = 0;
+  state.milestone.depth = 0;
+  state.milestone.text = "";
+  state.milestone.timer = 0;
 }
 
 function startRound() {
@@ -147,9 +251,7 @@ function integratePhysics(dt) {
     while (overlapSolidRect(state.player.x, state.player.y, state.player.w, state.player.h)) {
       state.player.y -= dir;
     }
-    if (state.player.vy > 0) {
-      state.player.onGround = true;
-    }
+    if (state.player.vy > 0) state.player.onGround = true;
     state.player.vy = 0;
   } else {
     state.player.onGround = false;
@@ -160,30 +262,134 @@ function checkGoal() {
   const footY = state.player.y + state.player.h + 1;
   const tx = Math.floor((state.player.x + state.player.w / 2) / TILE);
   const ty = Math.floor(footY / TILE);
-  if (tileAt(tx, ty) === 3) {
+  if (tileAt(tx, ty) === TILE_TYPES.bedrock) {
     state.mode = "won";
+  }
+}
+
+function updateMilestones(dt) {
+  if (state.mode !== "playing") return;
+
+  const depth = getDepthMeters();
+  const clearedChunk = Math.floor(depth / 25) * 25;
+  if (clearedChunk > state.milestone.depth && clearedChunk > 0) {
+    state.milestone.depth = clearedChunk;
+    state.milestone.text = `${clearedChunk}m reached - ${getBiomeLabel(depth)}`;
+    state.milestone.timer = 2.6;
+  }
+
+  if (state.milestone.timer > 0) {
+    state.milestone.timer = Math.max(0, state.milestone.timer - dt);
   }
 }
 
 function update(dt) {
   state.time += dt;
-  if (state.mode !== "playing") return;
+  if (state.mode !== "playing") {
+    updateMilestones(dt);
+    return;
+  }
 
   applyInput();
   integratePhysics(dt);
   checkGoal();
+  updateMilestones(dt);
 
   const followY = state.player.y - VIEW_H * 0.55;
   const maxCamera = WORLD_H * TILE - VIEW_H;
   state.cameraY = Math.max(0, Math.min(maxCamera, followY));
 }
 
-function drawWorld() {
+function fillBackground() {
+  const depthFactor = Math.min(1, state.cameraY / (WORLD_H * TILE));
+  const topAlpha = 0.05 + depthFactor * 0.38;
+  const bottomAlpha = 0.12 + depthFactor * 0.58;
+
   const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H);
   grad.addColorStop(0, colors.skyTop);
   grad.addColorStop(1, colors.skyBottom);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  ctx.fillStyle = `rgba(12, 26, 42, ${topAlpha.toFixed(3)})`;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H * 0.6);
+
+  ctx.fillStyle = `rgba(4, 8, 12, ${bottomAlpha.toFixed(3)})`;
+  ctx.fillRect(0, VIEW_H * 0.3, VIEW_W, VIEW_H * 0.7);
+}
+
+function drawDepthGrid() {
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  for (let marker = 25; marker < BEDROCK_START; marker += 25) {
+    const y = marker * TILE - state.cameraY;
+    if (y < -10 || y > VIEW_H + 10) continue;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(VIEW_W, y);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = "10px 'Press Start 2P'";
+    ctx.fillText(`${marker}m`, 8, y - 6);
+  }
+}
+
+function drawTile(px, py, tile) {
+  if (tile === TILE_TYPES.dirt) {
+    ctx.fillStyle = colors.dirt;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.fillRect(px + 6, py + 7, 4, 4);
+    return;
+  }
+
+  if (tile === TILE_TYPES.stone) {
+    ctx.fillStyle = colors.stone;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = "rgba(0,0,0,0.15)";
+    ctx.fillRect(px + 3, py + 11, 5, 5);
+    return;
+  }
+
+  if (tile === TILE_TYPES.grass) {
+    ctx.fillStyle = colors.dirt;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = colors.grass;
+    ctx.fillRect(px, py, TILE, 8);
+    return;
+  }
+
+  if (tile === TILE_TYPES.bedrock) {
+    ctx.fillStyle = colors.bedrock;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fillRect(px + 4, py + 4, TILE - 8, 3);
+    ctx.fillRect(px + 7, py + 13, TILE - 12, 2);
+    return;
+  }
+
+  if (tile === TILE_TYPES.coal) {
+    ctx.fillStyle = colors.stone;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = colors.coal;
+    ctx.fillRect(px + 4, py + 5, 7, 7);
+    ctx.fillRect(px + 18, py + 15, 6, 6);
+    return;
+  }
+
+  if (tile === TILE_TYPES.iron) {
+    ctx.fillStyle = colors.stone;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = colors.iron;
+    ctx.fillRect(px + 4, py + 5, 7, 7);
+    ctx.fillRect(px + 18, py + 15, 6, 6);
+  }
+}
+
+function drawWorld() {
+  fillBackground();
+  drawDepthGrid();
 
   const minTy = Math.floor(state.cameraY / TILE);
   const maxTy = Math.ceil((state.cameraY + VIEW_H) / TILE);
@@ -191,20 +397,10 @@ function drawWorld() {
   for (let ty = minTy; ty <= maxTy; ty++) {
     for (let tx = 0; tx < WORLD_W; tx++) {
       const tile = tileAt(tx, ty);
-      if (!tile) continue;
-
-      if (tile === 1) ctx.fillStyle = colors.dirt;
-      if (tile === 2) ctx.fillStyle = colors.stone;
-      if (tile === 3) ctx.fillStyle = colors.bedrock;
-
+      if (tile === TILE_TYPES.air) continue;
       const px = tx * TILE;
       const py = ty * TILE - state.cameraY;
-      ctx.fillRect(px, py, TILE, TILE);
-
-      if (tile === 3) {
-        ctx.fillStyle = "rgba(255,255,255,0.06)";
-        ctx.fillRect(px + 4, py + 4, TILE - 8, 3);
-      }
+      drawTile(px, py, tile);
     }
   }
 }
@@ -218,6 +414,22 @@ function drawPlayer() {
   ctx.fillStyle = colors.accent;
   ctx.fillRect(px + 4, py + 8, 5, 5);
   ctx.fillRect(px + state.player.w - 9, py + 8, 5, 5);
+}
+
+function drawMilestone() {
+  if (state.milestone.timer <= 0) return;
+
+  const alpha = Math.min(1, state.milestone.timer / 0.4);
+  ctx.fillStyle = `rgba(9, 13, 20, ${(0.64 * alpha).toFixed(3)})`;
+  ctx.fillRect(220, 20, VIEW_W - 440, 54);
+
+  ctx.strokeStyle = "rgba(245, 158, 11, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(220, 20, VIEW_W - 440, 54);
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "11px 'Press Start 2P'";
+  ctx.fillText(state.milestone.text.toUpperCase(), 246, 52);
 }
 
 function drawModeMessage() {
@@ -237,7 +449,7 @@ function drawModeMessage() {
   if (state.mode === "title") {
     ctx.fillText("WASD/ARROWS TO MOVE", 206, 230);
     ctx.fillText("SPACE OR W TO JUMP", 220, 260);
-    ctx.fillText("REACH BEDROCK TO WIN", 190, 300);
+    ctx.fillText("FOLLOW THE SHAFT TO BEDROCK", 156, 300);
   } else {
     ctx.fillText("YOU REACHED BEDROCK", 210, 246);
     ctx.fillText("PRESS RESTART FOR A NEW RUN", 148, 290);
@@ -245,14 +457,16 @@ function drawModeMessage() {
 }
 
 function refreshDomHud() {
-  const depth = Math.max(0, Math.floor((state.player.y - TILE * 2) / TILE));
+  const depth = getDepthMeters();
   depthReadout.textContent = `Depth: ${depth}m`;
+  biomeReadout.textContent = `Biome: ${getBiomeLabel(depth)}`;
   modeReadout.textContent = `Mode: ${state.mode}`;
 }
 
 function render() {
   drawWorld();
   drawPlayer();
+  drawMilestone();
   drawModeMessage();
   refreshDomHud();
 }
@@ -289,11 +503,13 @@ window.render_game_to_text = () => {
   const footY = state.player.y + state.player.h;
   const sampleTx = Math.floor((state.player.x + state.player.w / 2) / TILE);
   const sampleTy = Math.floor(footY / TILE);
+  const depth = getDepthMeters();
 
   return JSON.stringify({
     coordinateSystem: "origin top-left, +x right, +y down, units in pixels",
     mode: state.mode,
-    depthMeters: Math.max(0, Math.floor((state.player.y - TILE * 2) / TILE)),
+    depthMeters: depth,
+    biome: getBiomeLabel(depth),
     player: {
       x: Math.round(state.player.x),
       y: Math.round(state.player.y),
@@ -303,10 +519,11 @@ window.render_game_to_text = () => {
     },
     camera: { y: Math.round(state.cameraY) },
     goal: { bedrockStartsAtTileY: BEDROCK_START },
+    latestMilestone: state.milestone.text || null,
     belowPlayerTile: {
       x: sampleTx,
       y: sampleTy,
-      type: tileAt(sampleTx, sampleTy),
+      type: tileNames[tileAt(sampleTx, sampleTy)],
     },
   });
 };
