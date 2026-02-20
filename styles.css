@@ -112,6 +112,12 @@ button:hover {
   color: #fcd34d;
 }
 
+#tool-readout {
+  margin: 0;
+  font-size: 0.56rem;
+  color: #93c5fd;
+}
+
 @media (max-width: 720px) {
   .hud {
     flex-direction: column;
