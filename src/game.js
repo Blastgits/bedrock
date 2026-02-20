@@ -8,6 +8,7 @@ const GRAVITY = 1700;
 const MOVE_SPEED = 240;
 const JUMP_SPEED = 660;
 const MINE_REACH = TILE * 8;
+const STONE_OBJECTIVE = 1;
 
 const TILE_TYPES = {
   air: 0,
@@ -131,6 +132,13 @@ const state = {
   isFullscreen: false,
   tool: "hand",
   torches: [],
+  objectiveHintCooldown: 0,
+  objectives: {
+    gatherStone: false,
+    craftTool: false,
+    placeTorch: false,
+    reachBedrock: false,
+  },
   mine: {
     tx: null,
     ty: null,
@@ -425,6 +433,9 @@ function placeTorchAtCursor() {
 
   state.torches.push(placement);
   state.inventory.coal -= 1;
+  if (!state.objectives.placeTorch) {
+    state.objectives.placeTorch = true;
+  }
   addToast("Torch placed");
 }
 
@@ -448,6 +459,11 @@ function grantDrop(tile) {
   const key = resourceByTile[tile];
   if (!key) return;
   state.inventory[key] += 1;
+
+  if (!state.objectives.gatherStone && state.inventory.stone >= STONE_OBJECTIVE) {
+    state.objectives.gatherStone = true;
+    addToast("Objective complete: gather stone");
+  }
 }
 
 function addToast(text, duration = 2.2) {
@@ -477,6 +493,11 @@ function resetPlayer() {
   state.inventory.iron = 0;
   state.tool = "hand";
   state.torches = [];
+  state.objectiveHintCooldown = 0;
+  state.objectives.gatherStone = false;
+  state.objectives.craftTool = false;
+  state.objectives.placeTorch = false;
+  state.objectives.reachBedrock = false;
   state.showCraftPanel = false;
   resetMiningState();
 }
@@ -668,7 +689,17 @@ function checkGoal() {
   const tx = Math.floor((state.player.x + state.player.w / 2) / TILE);
   const ty = Math.floor(footY / TILE);
   if (tileAt(tx, ty) === TILE_TYPES.bedrock) {
-    state.mode = "won";
+    const prepDone =
+      state.objectives.gatherStone &&
+      state.objectives.craftTool &&
+      state.objectives.placeTorch;
+    if (prepDone) {
+      state.objectives.reachBedrock = true;
+      state.mode = "won";
+    } else if (state.objectiveHintCooldown <= 0) {
+      addToast("Complete prep goals before bedrock");
+      state.objectiveHintCooldown = 1.1;
+    }
   }
 }
 
@@ -751,6 +782,9 @@ function tryCraft(kind) {
 
   consumeCost(recipe.cost);
   state.tool = kind;
+  if (!state.objectives.craftTool && (kind === "stone" || kind === "iron")) {
+    state.objectives.craftTool = true;
+  }
   addToast(`Crafted ${recipe.label}`);
 }
 
@@ -758,6 +792,9 @@ function update(dt) {
   state.time += dt;
   updateToast(dt);
   updateDamageTimers(dt);
+  if (state.objectiveHintCooldown > 0) {
+    state.objectiveHintCooldown = Math.max(0, state.objectiveHintCooldown - dt);
+  }
 
   if (state.mode !== "playing") {
     updateMilestones(dt);
@@ -1062,6 +1099,52 @@ function drawCraftPanel() {
   ctx.fillText(`CURRENT TOOL: ${getToolMeta().label.toUpperCase()}`, panelX + 10, panelY + 126);
 }
 
+function drawObjectivesPanel() {
+  if (state.mode === "title") return;
+
+  const panelX = VIEW_W - 320;
+  const panelY = 18;
+  const panelW = 292;
+  const panelH = 124;
+
+  ctx.fillStyle = "rgba(0,0,0,0.58)";
+  ctx.fillRect(panelX, panelY, panelW, panelH);
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.7)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "10px 'Press Start 2P'";
+  ctx.fillText("BEDROCK OBJECTIVES", panelX + 10, panelY + 18);
+
+  const lines = [
+    {
+      done: state.objectives.gatherStone,
+      label: `Gather stone (${state.objectives.gatherStone ? STONE_OBJECTIVE : state.inventory.stone}/${STONE_OBJECTIVE})`,
+    },
+    {
+      done: state.objectives.craftTool,
+      label: "Craft better pickaxe",
+    },
+    {
+      done: state.objectives.placeTorch,
+      label: "Place one torch",
+    },
+    {
+      done: state.objectives.reachBedrock,
+      label: "Touch bedrock",
+    },
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    const rowY = panelY + 40 + i * 20;
+    ctx.fillStyle = lines[i].done ? "#86efac" : "#fca5a5";
+    ctx.fillText(lines[i].done ? "[x]" : "[ ]", panelX + 10, rowY);
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillText(lines[i].label.toUpperCase(), panelX + 40, rowY);
+  }
+}
+
 function drawModeMessage() {
   if (state.mode === "playing") return;
 
@@ -1111,6 +1194,7 @@ function render() {
   drawMiningCursor();
   drawMilestone();
   drawCraftPanel();
+  drawObjectivesPanel();
   drawToast();
   drawModeMessage();
   refreshDomHud();
@@ -1218,6 +1302,7 @@ window.render_game_to_text = () => {
     },
     camera: { y: Math.round(state.cameraY) },
     goal: { bedrockStartsAtTileY: BEDROCK_START },
+    objectives: { ...state.objectives },
     tool: getToolMeta().label,
     inventory: { ...state.inventory },
     torches: state.torches.slice(0, 8).map((torch) => ({ x: torch.tx, y: torch.ty })),
