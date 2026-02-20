@@ -32,3 +32,10 @@ and push up like 8 separate PRs to make a minecraft themed game around reaching 
 - Added craft shortcuts (`B` for stone pickaxe, `Enter` for iron pickaxe).
 - Added tool state to HUD and `render_game_to_text`, plus `scripts/actions/pr4-smoke.json`.
 - Playwright smoke run completed for PR4 (`output/web-game/pr4`), confirming stone pickaxe crafting and inventory cost consumption without console errors.
+
+## PR5 - Hazards and survival loop
+- Added lava hazards (tutorial pool + deeper random pockets) and a fluid lava tile type.
+- Added health, damage cooldowns, hurt flash, lava damage, and fall damage.
+- Added lose state messaging and health HUD readout.
+- Added hazard status to `render_game_to_text` and `scripts/actions/pr5-smoke.json`.
+- Playwright smoke run completed for PR5 (`output/web-game/pr5`), showing health drop to 80 after hazard contact and no console errors.
