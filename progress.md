@@ -46,3 +46,10 @@ and push up like 8 separate PRs to make a minecraft themed game around reaching 
 - Added fullscreen toggle (`F`) with resize/fullscreen synchronization for canvas display.
 - Added torch/fullscreen state to `render_game_to_text` and `scripts/actions/pr6-smoke.json`.
 - Playwright smoke run completed for PR6 (`output/web-game/pr6`), confirming torch placement (`torchCount: 1`) and no console errors.
+
+## PR7 - Objective progression and win gating
+- Added objective checklist: gather stone, craft upgraded tool, place torch, then touch bedrock.
+- Added objective panel UI and objective state in `render_game_to_text`.
+- Updated bedrock win condition to require pre-objectives before final completion.
+- Added `scripts/actions/pr7-smoke.json` to validate objective progression events.
+- Playwright smoke run completed for PR7 (`output/web-game/pr7`), confirming objective progression updates (gather/craft/torch) with no console errors.
