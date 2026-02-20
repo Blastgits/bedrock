@@ -39,3 +39,10 @@ and push up like 8 separate PRs to make a minecraft themed game around reaching 
 - Added lose state messaging and health HUD readout.
 - Added hazard status to `render_game_to_text` and `scripts/actions/pr5-smoke.json`.
 - Playwright smoke run completed for PR5 (`output/web-game/pr5`), showing health drop to 80 after hazard contact and no console errors.
+
+## PR6 - Lighting, torches, and fullscreen
+- Added depth-based darkness pass with light cutouts around player and placed torches.
+- Added torch placement (right-click or `T`) consuming coal and tracked torch positions.
+- Added fullscreen toggle (`F`) with resize/fullscreen synchronization for canvas display.
+- Added torch/fullscreen state to `render_game_to_text` and `scripts/actions/pr6-smoke.json`.
+- Playwright smoke run completed for PR6 (`output/web-game/pr6`), confirming torch placement (`torchCount: 1`) and no console errors.
