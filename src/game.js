@@ -17,6 +17,7 @@ const TILE_TYPES = {
   grass: 4,
   coal: 5,
   iron: 6,
+  lava: 7,
 };
 
 const tileNames = {
@@ -27,6 +28,7 @@ const tileNames = {
   4: "grass",
   5: "coal_ore",
   6: "iron_ore",
+  7: "lava",
 };
 
 const hardnessByTile = {
@@ -87,6 +89,8 @@ const colors = {
   grass: "#4ade80",
   coal: "#525b61",
   iron: "#d1a67f",
+  lavaBright: "#fb923c",
+  lavaDark: "#dc2626",
   player: "#fbbf24",
   accent: "#1f2937",
   mining: "#fef3c7",
@@ -97,6 +101,7 @@ const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("start-btn");
 const depthReadout = document.getElementById("depth-readout");
 const biomeReadout = document.getElementById("biome-readout");
+const healthReadout = document.getElementById("health-readout");
 const modeReadout = document.getElementById("mode-readout");
 const toolReadout = document.getElementById("tool-readout");
 const inventoryReadout = document.getElementById("inventory-readout");
@@ -143,6 +148,10 @@ const state = {
     w: 22,
     h: 30,
     onGround: false,
+    health: 100,
+    maxHealth: 100,
+    damageCooldown: 0,
+    hurtFlash: 0,
   },
 };
 
@@ -238,10 +247,34 @@ function carveDescentShaft(world) {
   }
 }
 
+function addLavaHazards(world) {
+  world[18][8] = TILE_TYPES.lava;
+  world[18][9] = TILE_TYPES.lava;
+  world[17][8] = TILE_TYPES.air;
+  world[17][9] = TILE_TYPES.air;
+
+  for (let y = 76; y < BEDROCK_START - 1; y++) {
+    for (let x = 3; x < WORLD_W - 3; x++) {
+      if (world[y][x] !== TILE_TYPES.air) continue;
+      const below = world[y + 1][x];
+      if (![TILE_TYPES.dirt, TILE_TYPES.stone, TILE_TYPES.coal, TILE_TYPES.iron].includes(below)) continue;
+
+      const roll = randSeeded(x * 3.1, y * 2.7);
+      if (roll > 0.992) {
+        world[y + 1][x] = TILE_TYPES.lava;
+        if (roll > 0.996 && world[y + 1][x + 1] !== TILE_TYPES.air) {
+          world[y + 1][x + 1] = TILE_TYPES.lava;
+        }
+      }
+    }
+  }
+}
+
 function buildWorld() {
   const world = new Array(WORLD_H);
   buildBaseWorld(world);
   carveDescentShaft(world);
+  addLavaHazards(world);
   state.world = world;
 }
 
@@ -260,11 +293,11 @@ function setTile(tx, ty, value) {
 }
 
 function isSolidTile(value) {
-  return value !== TILE_TYPES.air;
+  return value !== TILE_TYPES.air && value !== TILE_TYPES.lava;
 }
 
 function isBreakable(value) {
-  return value !== TILE_TYPES.air && value !== TILE_TYPES.bedrock;
+  return value !== TILE_TYPES.air && value !== TILE_TYPES.bedrock && value !== TILE_TYPES.lava;
 }
 
 function getDepthMeters() {
@@ -359,6 +392,10 @@ function resetPlayer() {
   state.player.vx = 0;
   state.player.vy = 0;
   state.player.onGround = false;
+  state.player.health = 100;
+  state.player.damageCooldown = 0;
+  state.player.hurtFlash = 0;
+
   state.cameraY = 0;
   state.milestone.depth = 0;
   state.milestone.text = "";
@@ -397,6 +434,20 @@ function overlapSolidRect(x, y, w, h) {
   return false;
 }
 
+function overlapTileType(x, y, w, h, tileType) {
+  const minTx = Math.floor(x / TILE);
+  const maxTx = Math.floor((x + w - 1) / TILE);
+  const minTy = Math.floor(y / TILE);
+  const maxTy = Math.floor((y + h - 1) / TILE);
+
+  for (let ty = minTy; ty <= maxTy; ty++) {
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      if (tileAt(tx, ty) === tileType) return true;
+    }
+  }
+  return false;
+}
+
 function applyInput() {
   let axis = 0;
   if (state.keys.has("arrowleft") || state.keys.has("a")) axis -= 1;
@@ -407,6 +458,28 @@ function applyInput() {
   if (wantsJump && state.player.onGround) {
     state.player.vy = -JUMP_SPEED;
     state.player.onGround = false;
+  }
+}
+
+function applyDamage(amount, reason) {
+  if (state.mode !== "playing") return;
+  if (state.player.damageCooldown > 0) return;
+
+  state.player.health = Math.max(0, state.player.health - amount);
+  state.player.damageCooldown = 0.45;
+  state.player.hurtFlash = 0.3;
+
+  if (reason === "lava") {
+    addToast(`Lava burn -${amount}`);
+  }
+  if (reason === "fall") {
+    addToast(`Hard landing -${amount}`);
+  }
+
+  if (state.player.health <= 0) {
+    state.mode = "lost";
+    state.mouse.down = false;
+    addToast("You were defeated");
   }
 }
 
@@ -423,13 +496,20 @@ function integratePhysics(dt) {
     state.player.vx = 0;
   }
 
+  const preStepVy = state.player.vy;
   state.player.y += state.player.vy * dt;
   if (overlapSolidRect(state.player.x, state.player.y, state.player.w, state.player.h)) {
     const dir = Math.sign(state.player.vy) || 1;
     while (overlapSolidRect(state.player.x, state.player.y, state.player.w, state.player.h)) {
       state.player.y -= dir;
     }
-    if (state.player.vy > 0) state.player.onGround = true;
+    if (state.player.vy > 0) {
+      state.player.onGround = true;
+      if (preStepVy > 760) {
+        const damage = Math.max(6, Math.floor((preStepVy - 760) / 32));
+        applyDamage(damage, "fall");
+      }
+    }
     state.player.vy = 0;
   } else {
     state.player.onGround = false;
@@ -472,7 +552,24 @@ function updateMining(dt) {
   }
 }
 
+function updateHazards() {
+  if (state.mode !== "playing") return;
+
+  const touchingLava = overlapTileType(
+    state.player.x,
+    state.player.y,
+    state.player.w,
+    state.player.h,
+    TILE_TYPES.lava,
+  );
+  if (touchingLava) {
+    applyDamage(8, "lava");
+  }
+}
+
 function checkGoal() {
+  if (state.mode !== "playing") return;
+
   const footY = state.player.y + state.player.h + 1;
   const tx = Math.floor((state.player.x + state.player.w / 2) / TILE);
   const ty = Math.floor(footY / TILE);
@@ -500,6 +597,15 @@ function updateMilestones(dt) {
 function updateToast(dt) {
   if (state.toast.timer > 0) {
     state.toast.timer = Math.max(0, state.toast.timer - dt);
+  }
+}
+
+function updateDamageTimers(dt) {
+  if (state.player.damageCooldown > 0) {
+    state.player.damageCooldown = Math.max(0, state.player.damageCooldown - dt);
+  }
+  if (state.player.hurtFlash > 0) {
+    state.player.hurtFlash = Math.max(0, state.player.hurtFlash - dt);
   }
 }
 
@@ -557,6 +663,7 @@ function tryCraft(kind) {
 function update(dt) {
   state.time += dt;
   updateToast(dt);
+  updateDamageTimers(dt);
 
   if (state.mode !== "playing") {
     updateMilestones(dt);
@@ -566,6 +673,7 @@ function update(dt) {
   applyInput();
   updateMining(dt);
   integratePhysics(dt);
+  updateHazards();
   checkGoal();
   updateMilestones(dt);
 
@@ -658,6 +766,21 @@ function drawTile(px, py, tile) {
     ctx.fillStyle = colors.iron;
     ctx.fillRect(px + 4, py + 5, 7, 7);
     ctx.fillRect(px + 18, py + 15, 6, 6);
+    return;
+  }
+
+  if (tile === TILE_TYPES.lava) {
+    const pulse = 0.45 + Math.sin(state.time * 6 + px * 0.01) * 0.14;
+    const gradient = ctx.createLinearGradient(px, py, px, py + TILE);
+    gradient.addColorStop(0, colors.lavaBright);
+    gradient.addColorStop(1, colors.lavaDark);
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = `rgba(255, 255, 255, ${pulse.toFixed(3)})`;
+    ctx.fillRect(px + 4, py + 4, TILE - 8, 3);
+    ctx.fillStyle = "rgba(255, 30, 30, 0.26)";
+    ctx.fillRect(px, py + TILE - 5, TILE, 5);
   }
 }
 
@@ -679,11 +802,32 @@ function drawWorld() {
   }
 }
 
+function drawHealthBar() {
+  const x = 20;
+  const y = 18;
+  const w = 220;
+  const h = 16;
+  const ratio = Math.max(0, state.player.health / state.player.maxHealth);
+
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = ratio > 0.5 ? "#4ade80" : ratio > 0.25 ? "#facc15" : "#f87171";
+  ctx.fillRect(x + 2, y + 2, (w - 4) * ratio, h - 4);
+  ctx.strokeStyle = "rgba(255,255,255,0.4)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "10px 'Press Start 2P'";
+  ctx.fillText(`HP ${state.player.health}`, x + 8, y + 12);
+}
+
 function drawPlayer() {
   const px = Math.round(state.player.x);
   const py = Math.round(state.player.y - state.cameraY);
+  const flashing = state.player.hurtFlash > 0 && Math.floor(state.time * 16) % 2 === 0;
 
-  ctx.fillStyle = colors.player;
+  ctx.fillStyle = flashing ? "#f87171" : colors.player;
   ctx.fillRect(px, py, state.player.w, state.player.h);
   ctx.fillStyle = colors.accent;
   ctx.fillRect(px + 4, py + 8, 5, 5);
@@ -793,10 +937,13 @@ function drawModeMessage() {
     ctx.fillText("SPACE OR W TO JUMP", 220, 238);
     ctx.fillText("HOLD MOUSE TO MINE", 222, 264);
     ctx.fillText("B / ENTER TO CRAFT TOOLS", 170, 290);
-    ctx.fillText("REACH BEDROCK TO WIN", 190, 322);
-  } else {
+    ctx.fillText("AVOID LAVA, REACH BEDROCK", 175, 322);
+  } else if (state.mode === "won") {
     ctx.fillText("YOU REACHED BEDROCK", 210, 246);
     ctx.fillText("PRESS RESTART FOR A NEW RUN", 148, 290);
+  } else {
+    ctx.fillText("YOU WERE DEFEATED BELOW", 178, 246);
+    ctx.fillText("PRESS RESTART TO TRY AGAIN", 168, 290);
   }
 }
 
@@ -804,6 +951,7 @@ function refreshDomHud() {
   const depth = getDepthMeters();
   depthReadout.textContent = `Depth: ${depth}m`;
   biomeReadout.textContent = `Biome: ${getBiomeLabel(depth)}`;
+  healthReadout.textContent = `Health: ${state.player.health}`;
   modeReadout.textContent = `Mode: ${state.mode}`;
   toolReadout.textContent = `Tool: ${getToolMeta().label}`;
   inventoryReadout.textContent = `Bag: ${inventorySummary()}`;
@@ -811,6 +959,7 @@ function refreshDomHud() {
 
 function render() {
   drawWorld();
+  drawHealthBar();
   drawPlayer();
   drawMiningCursor();
   drawMilestone();
@@ -903,11 +1052,13 @@ window.render_game_to_text = () => {
       vx: Math.round(state.player.vx),
       vy: Math.round(state.player.vy),
       onGround: state.player.onGround,
+      health: state.player.health,
     },
     camera: { y: Math.round(state.cameraY) },
     goal: { bedrockStartsAtTileY: BEDROCK_START },
     tool: getToolMeta().label,
     inventory: { ...state.inventory },
+    touchingLava: overlapTileType(state.player.x, state.player.y, state.player.w, state.player.h, TILE_TYPES.lava),
     mouse: {
       x: Math.round(state.mouse.x),
       y: Math.round(state.mouse.y),
