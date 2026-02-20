@@ -25,3 +25,10 @@ and push up like 8 separate PRs to make a minecraft themed game around reaching 
 - Added HUD inventory readout and mining state in `render_game_to_text`.
 - Added `scripts/actions/pr3-smoke.json` with mouse mining input for automated checks.
 - Playwright smoke run completed for PR3 (`output/web-game/pr3`), confirming mined block drops recorded in inventory with no console errors.
+
+## PR4 - Crafting and tool upgrades
+- Added tool progression (`hand` -> `stone pickaxe` -> `iron pickaxe`) with mining speed multipliers.
+- Added crafting system with resource costs, status toasts, and toggleable craft panel (`C`).
+- Added craft shortcuts (`B` for stone pickaxe, `Enter` for iron pickaxe).
+- Added tool state to HUD and `render_game_to_text`, plus `scripts/actions/pr4-smoke.json`.
+- Playwright smoke run completed for PR4 (`output/web-game/pr4`), confirming stone pickaxe crafting and inventory cost consumption without console errors.

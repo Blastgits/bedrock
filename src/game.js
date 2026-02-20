@@ -45,6 +45,39 @@ const resourceByTile = {
   [TILE_TYPES.iron]: "iron",
 };
 
+const TOOL_DATA = {
+  hand: {
+    label: "hand",
+    miningPower: 1,
+  },
+  stone: {
+    label: "stone pickaxe",
+    miningPower: 1.75,
+  },
+  iron: {
+    label: "iron pickaxe",
+    miningPower: 2.45,
+  },
+};
+
+const CRAFT_RECIPES = {
+  stone: {
+    label: "stone pickaxe",
+    cost: {
+      dirt: 4,
+      stone: 1,
+    },
+  },
+  iron: {
+    label: "iron pickaxe",
+    cost: {
+      stone: 3,
+      coal: 1,
+      iron: 1,
+    },
+  },
+};
+
 const colors = {
   skyTop: "#92d6ff",
   skyBottom: "#3a89c8",
@@ -65,6 +98,7 @@ const startBtn = document.getElementById("start-btn");
 const depthReadout = document.getElementById("depth-readout");
 const biomeReadout = document.getElementById("biome-readout");
 const modeReadout = document.getElementById("mode-readout");
+const toolReadout = document.getElementById("tool-readout");
 const inventoryReadout = document.getElementById("inventory-readout");
 
 const state = {
@@ -83,6 +117,12 @@ const state = {
     text: "",
     timer: 0,
   },
+  toast: {
+    text: "",
+    timer: 0,
+  },
+  showCraftPanel: false,
+  tool: "hand",
   mine: {
     tx: null,
     ty: null,
@@ -308,6 +348,11 @@ function grantDrop(tile) {
   state.inventory[key] += 1;
 }
 
+function addToast(text, duration = 2.2) {
+  state.toast.text = text;
+  state.toast.timer = duration;
+}
+
 function resetPlayer() {
   state.player.x = TILE * 5.5;
   state.player.y = TILE * 1.5;
@@ -318,10 +363,14 @@ function resetPlayer() {
   state.milestone.depth = 0;
   state.milestone.text = "";
   state.milestone.timer = 0;
+  state.toast.text = "";
+  state.toast.timer = 0;
   state.inventory.dirt = 0;
   state.inventory.stone = 0;
   state.inventory.coal = 0;
   state.inventory.iron = 0;
+  state.tool = "hand";
+  state.showCraftPanel = false;
   resetMiningState();
 }
 
@@ -387,6 +436,10 @@ function integratePhysics(dt) {
   }
 }
 
+function getToolMeta() {
+  return TOOL_DATA[state.tool] || TOOL_DATA.hand;
+}
+
 function updateMining(dt) {
   if (state.mode !== "playing") {
     resetMiningState();
@@ -411,7 +464,7 @@ function updateMining(dt) {
     state.mine.required = target.required;
   }
 
-  state.mine.progress += dt;
+  state.mine.progress += dt * getToolMeta().miningPower;
   if (state.mine.progress >= state.mine.required) {
     setTile(target.tx, target.ty, TILE_TYPES.air);
     grantDrop(target.tile);
@@ -444,8 +497,67 @@ function updateMilestones(dt) {
   }
 }
 
+function updateToast(dt) {
+  if (state.toast.timer > 0) {
+    state.toast.timer = Math.max(0, state.toast.timer - dt);
+  }
+}
+
+function canAfford(cost) {
+  const pairs = Object.entries(cost);
+  for (const [resource, amount] of pairs) {
+    if ((state.inventory[resource] || 0) < amount) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function consumeCost(cost) {
+  const pairs = Object.entries(cost);
+  for (const [resource, amount] of pairs) {
+    state.inventory[resource] -= amount;
+  }
+}
+
+function recipeCostString(cost) {
+  return Object.entries(cost)
+    .map(([resource, amount]) => `${amount} ${resource}`)
+    .join(" + ");
+}
+
+function tryCraft(kind) {
+  if (state.mode !== "playing") return;
+
+  if (!CRAFT_RECIPES[kind]) return;
+  if (kind === "stone" && (state.tool === "stone" || state.tool === "iron")) {
+    addToast("Stone pickaxe already crafted");
+    return;
+  }
+  if (kind === "iron" && state.tool === "iron") {
+    addToast("Iron pickaxe already crafted");
+    return;
+  }
+  if (kind === "iron" && state.tool === "hand") {
+    addToast("Craft stone pickaxe first");
+    return;
+  }
+
+  const recipe = CRAFT_RECIPES[kind];
+  if (!canAfford(recipe.cost)) {
+    addToast(`Need ${recipeCostString(recipe.cost)}`);
+    return;
+  }
+
+  consumeCost(recipe.cost);
+  state.tool = kind;
+  addToast(`Crafted ${recipe.label}`);
+}
+
 function update(dt) {
   state.time += dt;
+  updateToast(dt);
+
   if (state.mode !== "playing") {
     updateMilestones(dt);
     return;
@@ -616,6 +728,52 @@ function drawMilestone() {
   ctx.fillText(state.milestone.text.toUpperCase(), 246, 52);
 }
 
+function drawToast() {
+  if (state.toast.timer <= 0) return;
+  const alpha = Math.min(1, state.toast.timer / 0.35);
+
+  ctx.fillStyle = `rgba(0, 0, 0, ${(0.6 * alpha).toFixed(3)})`;
+  ctx.fillRect(250, VIEW_H - 72, VIEW_W - 500, 38);
+  ctx.strokeStyle = "rgba(147, 197, 253, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(250, VIEW_H - 72, VIEW_W - 500, 38);
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "10px 'Press Start 2P'";
+  ctx.fillText(state.toast.text.toUpperCase(), 268, VIEW_H - 48);
+}
+
+function drawCraftPanel() {
+  if (!state.showCraftPanel || state.mode !== "playing") return;
+
+  const panelX = 18;
+  const panelY = VIEW_H - 170;
+  const panelW = 365;
+  const panelH = 148;
+
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(panelX, panelY, panelW, panelH);
+  ctx.strokeStyle = "rgba(245, 158, 11, 0.7)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "10px 'Press Start 2P'";
+  ctx.fillText("CRAFT PANEL (C TO TOGGLE)", panelX + 10, panelY + 20);
+
+  const stoneAffordable = canAfford(CRAFT_RECIPES.stone.cost);
+  const ironAffordable = canAfford(CRAFT_RECIPES.iron.cost);
+
+  ctx.fillStyle = state.tool === "stone" || state.tool === "iron" ? "#93c5fd" : stoneAffordable ? "#86efac" : "#fca5a5";
+  ctx.fillText(`B  STONE PICK: ${recipeCostString(CRAFT_RECIPES.stone.cost).toUpperCase()}`, panelX + 10, panelY + 58);
+
+  ctx.fillStyle = state.tool === "iron" ? "#93c5fd" : ironAffordable ? "#86efac" : "#fca5a5";
+  ctx.fillText(`ENTER IRON PICK: ${recipeCostString(CRAFT_RECIPES.iron.cost).toUpperCase()}`, panelX + 10, panelY + 92);
+
+  ctx.fillStyle = "#e2e8f0";
+  ctx.fillText(`CURRENT TOOL: ${getToolMeta().label.toUpperCase()}`, panelX + 10, panelY + 126);
+}
+
 function drawModeMessage() {
   if (state.mode === "playing") return;
 
@@ -631,10 +789,11 @@ function drawModeMessage() {
 
   ctx.font = "12px 'Press Start 2P'";
   if (state.mode === "title") {
-    ctx.fillText("WASD/ARROWS TO MOVE", 206, 220);
-    ctx.fillText("SPACE OR W TO JUMP", 220, 252);
-    ctx.fillText("HOLD MOUSE TO MINE", 222, 284);
-    ctx.fillText("REACH BEDROCK TO WIN", 190, 316);
+    ctx.fillText("WASD/ARROWS TO MOVE", 206, 212);
+    ctx.fillText("SPACE OR W TO JUMP", 220, 238);
+    ctx.fillText("HOLD MOUSE TO MINE", 222, 264);
+    ctx.fillText("B / ENTER TO CRAFT TOOLS", 170, 290);
+    ctx.fillText("REACH BEDROCK TO WIN", 190, 322);
   } else {
     ctx.fillText("YOU REACHED BEDROCK", 210, 246);
     ctx.fillText("PRESS RESTART FOR A NEW RUN", 148, 290);
@@ -646,6 +805,7 @@ function refreshDomHud() {
   depthReadout.textContent = `Depth: ${depth}m`;
   biomeReadout.textContent = `Biome: ${getBiomeLabel(depth)}`;
   modeReadout.textContent = `Mode: ${state.mode}`;
+  toolReadout.textContent = `Tool: ${getToolMeta().label}`;
   inventoryReadout.textContent = `Bag: ${inventorySummary()}`;
 }
 
@@ -654,6 +814,8 @@ function render() {
   drawPlayer();
   drawMiningCursor();
   drawMilestone();
+  drawCraftPanel();
+  drawToast();
   drawModeMessage();
   refreshDomHud();
 }
@@ -674,6 +836,21 @@ function frame(now) {
 function handleKeyChange(event, isDown) {
   const key = event.key.toLowerCase();
   state.keys[isDown ? "add" : "delete"](key);
+
+  if (isDown && state.mode === "playing") {
+    if (key === "b") {
+      tryCraft("stone");
+    }
+    if (key === "enter") {
+      tryCraft("iron");
+      event.preventDefault();
+    }
+    if (key === "c") {
+      state.showCraftPanel = !state.showCraftPanel;
+      event.preventDefault();
+    }
+  }
+
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
     event.preventDefault();
   }
@@ -729,18 +906,21 @@ window.render_game_to_text = () => {
     },
     camera: { y: Math.round(state.cameraY) },
     goal: { bedrockStartsAtTileY: BEDROCK_START },
+    tool: getToolMeta().label,
     inventory: { ...state.inventory },
     mouse: {
       x: Math.round(state.mouse.x),
       y: Math.round(state.mouse.y),
       down: state.mouse.down,
     },
+    craftingPanelVisible: state.showCraftPanel,
     mining: {
       target: state.mine.tx === null ? null : { x: state.mine.tx, y: state.mine.ty },
       progress: Number(state.mine.progress.toFixed(3)),
       required: Number(state.mine.required.toFixed(3)),
     },
     latestMilestone: state.milestone.text || null,
+    latestToast: state.toast.timer > 0 ? state.toast.text : null,
     belowPlayerTile: {
       x: sampleTx,
       y: sampleTy,
