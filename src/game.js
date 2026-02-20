@@ -1169,6 +1169,9 @@ function drawModeMessage() {
   } else if (state.mode === "won") {
     ctx.fillText("YOU REACHED BEDROCK", 210, 246);
     ctx.fillText("PRESS RESTART FOR A NEW RUN", 148, 290);
+  } else if (state.mode === "paused") {
+    ctx.fillText("GAME PAUSED", 314, 246);
+    ctx.fillText("PRESS P TO RESUME", 246, 290);
   } else {
     ctx.fillText("YOU WERE DEFEATED BELOW", 178, 246);
     ctx.fillText("PRESS RESTART TO TRY AGAIN", 168, 290);
@@ -1219,6 +1222,12 @@ function handleKeyChange(event, isDown) {
 
   if (isDown && key === "f") {
     toggleFullscreen();
+    event.preventDefault();
+  }
+
+  if (isDown && key === "p" && (state.mode === "playing" || state.mode === "paused")) {
+    state.mode = state.mode === "playing" ? "paused" : "playing";
+    addToast(state.mode === "paused" ? "Paused" : "Resumed");
     event.preventDefault();
   }
 
@@ -1280,6 +1289,10 @@ window.addEventListener("keydown", (event) => handleKeyChange(event, true));
 window.addEventListener("keyup", (event) => handleKeyChange(event, false));
 window.addEventListener("fullscreenchange", syncFullscreenState);
 window.addEventListener("resize", syncFullscreenState);
+
+window.restart_game = () => {
+  startRound();
+};
 
 window.render_game_to_text = () => {
   const footY = state.player.y + state.player.h;

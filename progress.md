@@ -53,3 +53,10 @@ and push up like 8 separate PRs to make a minecraft themed game around reaching 
 - Updated bedrock win condition to require pre-objectives before final completion.
 - Added `scripts/actions/pr7-smoke.json` to validate objective progression events.
 - Playwright smoke run completed for PR7 (`output/web-game/pr7`), confirming objective progression updates (gather/craft/torch) with no console errors.
+
+## PR8 - Final polish and docs
+- Added pause/resume (`P`) and `window.restart_game` helper for manual/automated reruns.
+- Added `scripts/run_smoke.sh` and npm script `smoke:latest` for repeatable smoke validation.
+- Expanded `README.md` with controls, feature overview, and smoke test usage.
+- Added `scripts/actions/pr8-smoke.json` as the default final smoke action burst.
+- Ran `npm run smoke:latest` for PR8; artifacts in `output/web-game/latest` show objective/crafting/torch flow and no console errors.
