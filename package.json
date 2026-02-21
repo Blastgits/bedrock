@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "serve": "npx serve . -l 4173",
-    "test:playwright": "node /Users/davidmiller/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js"
+    "test:playwright": "node --experimental-default-type=module /Users/davidmiller/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js",
+    "smoke:latest": "bash scripts/run_smoke.sh"
   },
   "devDependencies": {
     "playwright": "^1.58.2",
